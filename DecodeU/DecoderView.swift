@@ -72,28 +72,51 @@ struct DecoderView: View {
         }
     }
 
-    func decodeUnicode(from escapedString: String) -> String {
-        let pattern = #"\\u([0-9a-fA-F]{4})"#
-        let regex = try? NSRegularExpression(pattern: pattern, options: [])
-        let nsString = escapedString as NSString
-        var result = escapedString
+    func decodeUnicode(from rawInput: String) -> String {
+        var input = rawInput.replacingOccurrences(of: #"\\u"#, with: #"\u"#)
+                            .replacingOccurrences(of: #"\\U"#, with: #"\U"#)
 
-        let matches = regex?.matches(in: escapedString, options: [], range: NSRange(location: 0, length: nsString.length)) ?? []
-
+        // \UXXXX to \U0000XXXX
+        let shortPattern = #"\\U([0-9a-fA-F]{4})(?![0-9a-fA-F])"#
+        let shortRegex = try? NSRegularExpression(pattern: shortPattern)
+        let matches = shortRegex?.matches(in: input, range: NSRange(location: 0, length: input.utf16.count)) ?? []
         for match in matches.reversed() {
-            if let range = Range(match.range(at: 1), in: escapedString) {
-                let hexString = String(escapedString[range])
-                if let scalar = UnicodeScalar(UInt32(hexString, radix: 16)!) {
-                    let char = String(scalar)
-                    let fullRange = match.range(at: 0)
-                    result = (result as NSString).replacingCharacters(in: fullRange, with: char)
-                }
+            if let range = Range(match.range(at: 1), in: input) {
+                let padded = "0000" + input[range]
+                input = (input as NSString).replacingCharacters(in: match.range(at: 1), with: padded)
             }
         }
+
+        return decodeUnicodeStrict(from: input)
+    }
+
+    func decodeUnicodeStrict(from escapedString: String) -> String {
+        var result = escapedString
+
+        // \UXXXXXXXX
+        let pattern32 = #"\\U([0-9a-fA-F]{8})"#
+        let regex32 = try? NSRegularExpression(pattern: pattern32)
+        let matches32 = regex32?.matches(in: result, range: NSRange(location: 0, length: (result as NSString).length)) ?? []
+        for match in matches32.reversed() {
+            if let range = Range(match.range(at: 1), in: result),
+               let scalar = UInt32(result[range], radix: 16),
+               let unicode = UnicodeScalar(scalar) {
+                result = (result as NSString).replacingCharacters(in: match.range, with: String(unicode))
+            }
+        }
+
+        // \uXXXX
+        let pattern16 = #"\\u([0-9a-fA-F]{4})"#
+        let regex16 = try? NSRegularExpression(pattern: pattern16)
+        let matches16 = regex16?.matches(in: result, range: NSRange(location: 0, length: (result as NSString).length)) ?? []
+        for match in matches16.reversed() {
+            if let range = Range(match.range(at: 1), in: result),
+               let scalar = UInt32(result[range], radix: 16),
+               let unicode = UnicodeScalar(scalar) {
+                result = (result as NSString).replacingCharacters(in: match.range, with: String(unicode))
+            }
+        }
+
         return result
     }
-}
-
-#Preview {
-    DecoderView()
 }
